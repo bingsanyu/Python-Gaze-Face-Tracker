@@ -1,58 +1,32 @@
 
 """
-Eye Tracking and Head Pose Estimation
+眼球追踪和头部姿态估计
 
-This script is designed to perform real-time eye tracking and head pose estimation using a webcam feed. 
-It utilizes the MediaPipe library for facial landmark detection, which informs both eye tracking and 
-head pose calculations. The purpose is to track the user's eye movements and head orientation, 
-which can be applied in various domains such as HCI (Human-Computer Interaction), gaming, and accessibility tools.
+特性：
+- 实时眼球追踪，计算每帧的眼睛闭合比例和眨眼次数。
+- 头部姿态估计，确定用户头部的方向，包括俯仰角，偏航角和滚动角。
+- 校准功能，将初始头部姿态设为参考零位置。
+- 数据记录，用于进一步分析和调试。
 
-Features:
-- Real-time eye tracking to count blinks and calculate the eye aspect ratio for each frame.
-- Head pose estimation to determine the orientation of the user's head in terms of pitch, yaw, and roll angles.
-- Calibration feature to set the initial head pose as the reference zero position.
-- Data logging for further analysis and debugging.
+方法：
+- 脚本使用MediaPipe的FaceMesh模型提供的468个面部标记。
+- 通过计算每只眼睛的眼睛闭合比例(EAR)并基于EAR阈值检测眨眼来实现眼球追踪。
+- 使用solvePnP算法和预定义的3D面部模型以及从摄像头获取的对应2D标记来估计头部姿态。
+- 角度被标准化为直观的范围（俯仰角：[-90, 90]，偏航和滚动角：[-180, 180]）。
 
-Requirements:
-- Python 3.x
-- OpenCV (opencv-python)
-- MediaPipe (mediapipe)
-- Other Dependencies: math, socket, argparse, time, csv, datetime, os
+理论：
+- EAR被用作一个简单而有效的眼睛闭合检测指标。
+- 头部姿态角度是使用透视n点方法得出的，该方法根据其2D图像点和3D模型点估计物体的姿态。
 
-Methodology:
-- The script uses the 468 facial landmarks provided by MediaPipe's FaceMesh model.
-- Eye tracking is achieved by calculating the Eye Aspect Ratio (EAR) for each eye and detecting blinks based on EAR thresholds.
-- Head pose is estimated using the solvePnP algorithm with a predefined 3D facial model and corresponding 2D landmarks detected from the camera feed.
-- Angles are normalized to intuitive ranges (pitch: [-90, 90], yaw and roll: [-180, 180]).
+参数：
+你可以在代码中更改参数，如面部宽度，移动平均窗口，网络摄像头ID，终端输出，屏幕数据，日志详细信息等。
 
-Theory:
-- EAR is used as a simple yet effective metric for eye closure detection.
-- Head pose angles are derived using a perspective-n-point approach, which estimates an object's pose from its 2D image points and 3D model points.
-
-Parameters:
-You can change parameters as in face width, moving average window, webcam ID, terminal outputs, on screen data, loggin detail , etc. from the code 
-
-Author: Alireza Bagheri
-GitHub: https://github.com/alireza787b/Python-Gaze-Face-Tracker
-Email: p30planets@gmail.com
-LinkedIn: https://www.linkedin.com/in/alireza787b
-Date: November 2023
-
-Inspiration:
-Initially inspired by Asadullah Dal's iris segmentation project (https://github.com/Asadullah-Dal17/iris-Segmentation-mediapipe-python). 
-The blink detection feature is also contributed by Asadullah Dal (GitHub: Asadullah-Dal17).
-
-Usage:
--Run the script in a Python environment with the necessary dependencies installed. The script accepts command-line arguments for camera source configuration.
-- Press 'c' to recalibrate the head pose estimation to the current orientation.
-- Press 'r' to start/stop logging.
-- Press 'q' to exit the program.
-- Output is displayed in a window with live feed and annotations, and logged to a CSV file for further analysis.
-
-Ensure that all dependencies, especially MediaPipe, OpenCV, and NumPy, are installed before running the script.
-
-Note:
-This project is intended for educational and research purposes in fields like aviation, human-computer interaction, and more.
+使用：
+- 在安装了必要依赖的Python环境中运行脚本。脚本接受命令行参数进行摄像头源配置。
+- 按'c'键重新校准头部姿态估计到当前方向。
+- 按'r'键开始/停止记录。
+- 按'q'键退出程序。
+- 输出显示在一个带有实时反馈和注释的窗口中，并记录到CSV文件中以供进一步分析。
 
 """
 
@@ -69,65 +43,24 @@ import os
 from AngleBuffer import AngleBuffer
 
 
-#-----------------------------------------------------------------------------------------------------------------------------------
-#-----------------------------------------------------------------------------------------------------------------------------------
-
-# Parameters Documentation
-
-## User-Specific Measurements
-# USER_FACE_WIDTH: The horizontal distance between the outer edges of the user's cheekbones in millimeters. 
-# This measurement is used to scale the 3D model points for head pose estimation.
-# Measure your face width and adjust the value accordingly.
+# 用户颧骨外缘之间的水平距离（以毫米为单位）。此测量用于缩放头部姿态估计的3D模型点 测量您的面宽并相应调整该值。
 USER_FACE_WIDTH = 140  # [mm]
 
-## Camera Parameters (not currently used in calculations)
-# NOSE_TO_CAMERA_DISTANCE: The distance from the tip of the nose to the camera lens in millimeters.
-# Intended for future use where accurate physical distance measurements may be necessary.
-NOSE_TO_CAMERA_DISTANCE = 600  # [mm]
-
-## Configuration Parameters
-# PRINT_DATA: Enable or disable the printing of data to the console for debugging.
+IS_RECORDING = False
 PRINT_DATA = True
-
-# DEFAULT_WEBCAM: Default camera source index. '0' usually refers to the built-in webcam.
-DEFAULT_WEBCAM = 0
-
-# SHOW_ALL_FEATURES: If True, display all facial landmarks on the video feed.
-SHOW_ALL_FEATURES = True
-
-# LOG_DATA: Enable or disable logging of data to a CSV file.
 LOG_DATA = True
-
-# LOG_ALL_FEATURES: If True, log all facial landmarks to the CSV file.
+LOG_FOLDER = "logs"
+SHOW_ALL_FEATURES = True
 LOG_ALL_FEATURES = False
-
-# ENABLE_HEAD_POSE: Enable the head position and orientation estimator.
+SHOW_ON_SCREEN_DATA = True
 ENABLE_HEAD_POSE = True
 
-## Logging Configuration
-# LOG_FOLDER: Directory where log files will be stored.
-LOG_FOLDER = "logs"
-
-## Server Configuration
-# SERVER_IP: IP address of the server for sending data via UDP (default is localhost).
-SERVER_IP = "127.0.0.1"
-
-# SERVER_PORT: Port number for the server to listen on.
-SERVER_PORT = 7070
-
-## Blink Detection Parameters
-# SHOW_ON_SCREEN_DATA: If True, display blink count and head pose angles on the video feed.
-SHOW_ON_SCREEN_DATA = True
-
 # TOTAL_BLINKS: Counter for the total number of blinks detected.
-TOTAL_BLINKS = 0
-
+TOTAL_BLINKS = 0 # Tracks the total number of blinks detected
 # EYES_BLINK_FRAME_COUNTER: Counter for consecutive frames with detected potential blinks.
 EYES_BLINK_FRAME_COUNTER = 0
-
 # BLINK_THRESHOLD: Eye aspect ratio threshold below which a blink is registered.
 BLINK_THRESHOLD = 0.51
-
 # EYE_AR_CONSEC_FRAMES: Number of consecutive frames below the threshold required to confirm a blink.
 EYE_AR_CONSEC_FRAMES = 2
 
@@ -139,14 +72,17 @@ LEFT_EYE_OUTER_CORNER = [33]
 LEFT_EYE_INNER_CORNER = [133]
 RIGHT_EYE_OUTER_CORNER = [362]
 RIGHT_EYE_INNER_CORNER = [263]
-RIGHT_EYE_POINTS = [33, 160, 159, 158, 133, 153, 145, 144]
-LEFT_EYE_POINTS = [362, 385, 386, 387, 263, 373, 374, 380]
 NOSE_TIP_INDEX = 4
 CHIN_INDEX = 152
 LEFT_EYE_LEFT_CORNER_INDEX = 33
 RIGHT_EYE_RIGHT_CORNER_INDEX = 263
 LEFT_MOUTH_CORNER_INDEX = 61
 RIGHT_MOUTH_CORNER_INDEX = 291
+
+# Blinking Detection landmark's indices.
+# P0, P3, P4, P5, P8, P11, P12, P13
+RIGHT_EYE_POINTS = [33, 160, 159, 158, 133, 153, 145, 144]
+LEFT_EYE_POINTS = [362, 385, 386, 387, 263, 373, 374, 380]
 
 ## MediaPipe Model Confidence Parameters
 # These thresholds determine how confidently the model must detect or track to consider the results valid.
@@ -163,60 +99,19 @@ MOVING_AVERAGE_WINDOW = 10
 initial_pitch, initial_yaw, initial_roll = None, None, None
 calibrated = False
 
-# User-configurable parameters
-PRINT_DATA = True  # Enable/disable data printing
-DEFAULT_WEBCAM = 0  # Default webcam number
-SHOW_ALL_FEATURES = True  # Show all facial landmarks if True
-LOG_DATA = True  # Enable logging to CSV
-LOG_ALL_FEATURES = False  # Log all facial landmarks if True
-LOG_FOLDER = "logs"  # Folder to store log files
-
-# Server configuration
-SERVER_IP = "127.0.0.1"  # Set the server IP address (localhost)
-SERVER_PORT = 7070  # Set the server port
-
-# eyes blinking variables
-SHOW_BLINK_COUNT_ON_SCREEN = True  # Toggle to show the blink count on the video feed
-TOTAL_BLINKS = 0  # Tracks the total number of blinks detected
-EYES_BLINK_FRAME_COUNTER = (
-    0  # Counts the number of consecutive frames with a potential blink
-)
-BLINK_THRESHOLD = 0.51  # Threshold for the eye aspect ratio to trigger a blink
-EYE_AR_CONSEC_FRAMES = (
-    2  # Number of consecutive frames below the threshold to confirm a blink
-)
-# SERVER_ADDRESS: Tuple containing the SERVER_IP and SERVER_PORT for UDP communication.
+# Server
+SERVER_IP = "127.0.0.1"
+SERVER_PORT = 7070
 SERVER_ADDRESS = (SERVER_IP, SERVER_PORT)
 
-
-#If set to false it will wait for your command (hittig 'r') to start logging.
-IS_RECORDING = False  # Controls whether data is being logged
-
-# Command-line arguments for camera source
 parser = argparse.ArgumentParser(description="Eye Tracking Application")
 parser.add_argument(
-    "-c", "--camSource", help="Source of camera", default=str(DEFAULT_WEBCAM)
+    "-c", "--camSource", help="Source of camera", default=str(0)
 )
 args = parser.parse_args()
 
-# Iris and eye corners landmarks indices
-LEFT_IRIS = [474, 475, 476, 477]
-RIGHT_IRIS = [469, 470, 471, 472]
-L_H_LEFT = [33]  # Left eye Left Corner
-L_H_RIGHT = [133]  # Left eye Right Corner
-R_H_LEFT = [362]  # Right eye Left Corner
-R_H_RIGHT = [263]  # Right eye Right Corner
-
-# Blinking Detection landmark's indices.
-# P0, P3, P4, P5, P8, P11, P12, P13
-RIGHT_EYE_POINTS = [33, 160, 159, 158, 133, 153, 145, 144]
-LEFT_EYE_POINTS = [362, 385, 386, 387, 263, 373, 374, 380]
-
 # Face Selected points indices for Head Pose Estimation
 _indices_pose = [1, 33, 61, 199, 263, 291]
-
-# Server address for UDP socket communication
-SERVER_ADDRESS = (SERVER_IP, 7070)
 
 
 # Function to calculate vector position
